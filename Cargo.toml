@@ -1,0 +1,7 @@
+[package]
+name = "rs-dbx"
+version = "0.1.0"
+authors = ["scullionw <scuw1801@usherbrooke.ca>"]
+
+[dependencies]
+notify = "*"
