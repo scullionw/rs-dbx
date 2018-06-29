@@ -1,15 +1,14 @@
 extern crate notify;
 
-use notify::{RecommendedWatcher, Watcher, RecursiveMode};
+use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 
 use std::env;
+use std::error::Error;
 use std::path::Path;
 use std::process::Command;
 use std::sync::mpsc::channel;
 use std::sync::mpsc::Receiver;
 use std::time::Duration;
-use std::error::Error;
-
 
 fn watch<T: Reactor>(dir: &str, reactor: T) -> notify::Result<()> {
     let (tx, rx) = channel();
@@ -19,13 +18,11 @@ fn watch<T: Reactor>(dir: &str, reactor: T) -> notify::Result<()> {
     for _ in rx {
         reactor.run().expect("Run failure");
     }
-    
+
     Ok(())
 }
 
-
 fn main() {
-
     let args = env::args().skip(1).collect::<Vec<String>>();
 
     let source = &args[0];
@@ -49,16 +46,14 @@ fn main() {
 
     let dropbox_mirror = Mirror::new(source, target, ignorefile);
 
-    
     //dropbox_mirror.run().expect("Run failure");
     let _ = watch(source, dropbox_mirror).unwrap();
-
 }
 
 struct Mirror {
     source: String,
     target: String,
-    ignorefile: String
+    ignorefile: String,
 }
 
 trait Reactor {
@@ -67,17 +62,17 @@ trait Reactor {
 
 impl Mirror {
     fn new(source: &str, target: &str, ignorefile: &str) -> Mirror {
-        Mirror { 
+        Mirror {
             source: source.to_owned(),
             target: target.to_owned(),
-            ignorefile: ignorefile.to_owned()
+            ignorefile: ignorefile.to_owned(),
         }
     }
 }
 
 impl Reactor for Mirror {
     fn run(&self) -> Result<(), Box<Error>> {
-    let output = Command::new("rsync")
+        let output = Command::new("rsync")
                             .arg("-a")
                             .arg("--delete")
                             .arg("--exclude-from")
@@ -87,20 +82,19 @@ impl Reactor for Mirror {
                             .output()
                             .expect("rsync failed to start");
 
-    println!("status: {}", output.status);
-    println!("stdout: {}", String::from_utf8_lossy(&output.stdout));
-    eprintln!("stderr: {}", String::from_utf8_lossy(&output.stderr));
+        println!("status: {}", output.status);
+        println!("stdout: {}", String::from_utf8_lossy(&output.stdout));
+        eprintln!("stderr: {}", String::from_utf8_lossy(&output.stderr));
 
-    assert!(output.status.success());
-    // let s = if output.status.success() {
-    //     String::from_utf8_lossy(&output.stdout)
-    // } else {
-    //     String::from_utf8_lossy(&output.stderr)
-    // };
-    Ok(())
+        assert!(output.status.success());
+        // let s = if output.status.success() {
+        //     String::from_utf8_lossy(&output.stdout)
+        // } else {
+        //     String::from_utf8_lossy(&output.stderr)
+        // };
+        Ok(())
+    }
 }
-}
-
 
 struct Diff;
 
@@ -109,6 +103,3 @@ impl Diff {
         unimplemented!();
     }
 }
-
-
-
