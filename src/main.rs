@@ -6,74 +6,82 @@ use std::env;
 use std::path::Path;
 use std::process::Command;
 use std::sync::mpsc::channel;
+use std::sync::mpsc::Receiver;
 use std::time::Duration;
 use std::error::Error;
+use std::thread;
 
 
-fn watch(dir: &str) -> notify::Result<()> {
-    // Create a channel to receive the events.
+fn watch(dir: &str) -> notify::Result<Receiver<notify::DebouncedEvent>> {
     let (tx, rx) = channel();
+    let dir = dir.to_owned();
+    thread::spawn(move || {
+        let mut watcher: RecommendedWatcher = Watcher::new(tx, Duration::from_secs(2)).unwrap();
+        watcher.watch(&dir, RecursiveMode::Recursive).unwrap();
+    });
+    
+    Ok(rx)
+}
 
-    // Automatically select the best implementation for your platform.
-    // You can also access each implementation directly e.g. INotifyWatcher.
-    let mut watcher: RecommendedWatcher = try!(Watcher::new(tx, Duration::from_secs(2)));
 
-    // Add a path to be watched. All files and directories at that path and
-    // below will be monitored for changes.
-    try!(watcher.watch(dir, RecursiveMode::Recursive));
+fn main() {
 
-    // This is a simple loop, but you may want to use more complex logic here,
-    // for example to handle I/O.
+    let args = env::args().skip(1).collect::<Vec<String>>();
+
+    let source = &args[0];
+    let target = &args[1];
+    let ignorefile = &args[2];
+
+    if !Path::new(source).is_dir() {
+        eprintln!("Source is not a directory!");
+        std::process::exit(1)
+    }
+
+    if !Path::new(target).is_dir() {
+        eprintln!("Target is not a directory!");
+        std::process::exit(1)
+    }
+
+    if !Path::new(ignorefile).is_file() {
+        eprintln!("Ignore is not a file!");
+        std::process::exit(1)
+    }
+
+    let dropbox_mirror = Mirror::new(source, target, ignorefile);
+
+    
+    //dropbox_mirror.run().expect("Run failure");
+    let rx = watch(source).unwrap();
+    
     loop {
         match rx.recv() {
-            Ok(event) => println!("{:?}", event),
+            Ok(event) => {
+                dropbox_mirror.run().expect("Run failure");
+                println!("{:?}", event);
+            }
             Err(e) => println!("watch error: {:?}", e),
         }
     }
 }
 
-fn validate_path(filepath: &str) -> Result<String, &'static str>  {
-    let path = Path::new(filepath);
-    if path.is_dir() {
-        Ok(filepath.to_owned())
-    } else {
-        Err("Not a directory!")
-    }
+struct Mirror {
+    source: String,
+    target: String,
+    ignorefile: String
 }
 
-fn main() {
-
-    let args = env::args()
-                    .skip(1)
-                    .take(3)
-                    .map(move |x| validate_path(&x).unwrap() )
-                    .collect::<Vec<String>>();
-
-    let dropbox_mirror = Mirror::new(&args[0], &args[1], &args[2]);
-    
-
-    loop {
-        if let Err(e) = watch(&args[0]) { // pop watch list before calling rsync
-            println!("error: {:?}", e)
-        } else {
-            dropbox_mirror.run().expect("Run failure");
+impl Mirror {
+    fn new(source: &str, target: &str, ignorefile: &str) -> Mirror {
+        Mirror { 
+            source: source.to_owned(),
+            target: target.to_owned(),
+            ignorefile: ignorefile.to_owned()
         }
-    }
-}
-
-struct Mirror<'a> {
-    source: &'a str,
-    target: &'a str,
-    ignorefile: &'a str,
-}
-
-impl<'a> Mirror<'a> {
-    fn new<'b>(source: &'b str, target: &'b str, ignorefile: &'b str) -> Mirror<'b> {
-        Mirror { source, target, ignorefile }
     }
 
     fn run(&self) -> Result<(), Box<Error>> {
         let output = Command::new("rsync")
+                             .arg("-a")
                              .arg("--delete")
                              .arg("--exclude-from")
                              .arg(&self.ignorefile)
@@ -84,7 +92,7 @@ impl<'a> Mirror<'a> {
 
         println!("status: {}", output.status);
         println!("stdout: {}", String::from_utf8_lossy(&output.stdout));
-        println!("stderr: {}", String::from_utf8_lossy(&output.stderr));
+        eprintln!("stderr: {}", String::from_utf8_lossy(&output.stderr));
 
         assert!(output.status.success());
         // let s = if output.status.success() {
