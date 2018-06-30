@@ -15,9 +15,15 @@ use std::thread;
 fn watch(dir: &str) -> notify::Result<Receiver<notify::DebouncedEvent>> {
     let (tx, rx) = channel();
     let dir = dir.to_owned();
+    println!("Launching thread..");
     thread::spawn(move || {
         let mut watcher: RecommendedWatcher = Watcher::new(tx, Duration::from_secs(2)).unwrap();
+        println!("Created Watcher...");
         watcher.watch(&dir, RecursiveMode::Recursive).unwrap();
+
+        loop {
+            thread::sleep(Duration::from_secs(5));
+        }
     });
     
     Ok(rx)
@@ -49,18 +55,12 @@ fn main() {
 
     let dropbox_mirror = Mirror::new(source, target, ignorefile);
 
-    
-    //dropbox_mirror.run().expect("Run failure");
-    let rx = watch(source).unwrap();
-    
-    loop {
-        match rx.recv() {
-            Ok(event) => {
-                dropbox_mirror.run().expect("Run failure");
-                println!("{:?}", event);
-            }
-            Err(e) => println!("watch error: {:?}", e),
-        }
+    println!("WAITING...");
+    let mut counter = 0;
+    for _ in watch(source).unwrap() {
+        println!("Loop counter: {}", counter);
+        counter += 1;
+        dropbox_mirror.run().expect("Run failure");
     }
 }
 
