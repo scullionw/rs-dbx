@@ -52,7 +52,7 @@ fn main() {
     let ignorefile = &args[2];
 
     if !Path::new(source).is_dir() {
-        
+        eprintln!("Source is not a directory!");
         std::process::exit(1)
     }
 
