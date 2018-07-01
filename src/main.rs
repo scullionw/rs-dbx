@@ -9,14 +9,14 @@ use std::process::Command;
 use std::sync::mpsc;
 use std::time::Duration;
 
-struct Watchdog<T: Reactor> {
+struct Watchdog<'a, T: Reactor + 'a> {
     _watcher: RecommendedWatcher,
     rx: mpsc::Receiver<notify::DebouncedEvent>,
-    reactor: T,
+    reactor: &'a T,
 }
 
-impl<T: Reactor> Watchdog<T> {
-    fn new(reactor: T) -> Watchdog<T> {
+impl<'a, T: Reactor> Watchdog<'a, T> {
+    fn new(reactor: &T) -> Watchdog<T> {
         let (tx, rx) = mpsc::channel();
         let mut watcher: RecommendedWatcher =
             Watcher::new(tx, Duration::from_secs(2)).expect("Couldn't choose a watcher.");
@@ -67,7 +67,7 @@ fn main() {
     }
 
     let dropbox_mirror = Mirror::new(source, target, ignorefile);
-    let watchdog = Watchdog::new(dropbox_mirror);
+    let watchdog = Watchdog::new(&dropbox_mirror);
     watchdog.run();
 }
 
