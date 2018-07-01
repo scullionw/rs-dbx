@@ -6,31 +6,53 @@ use std::env;
 use std::error::Error;
 use std::path::Path;
 use std::process::Command;
-use std::sync::mpsc::channel;
-use std::sync::mpsc::Receiver;
+use std::sync::mpsc;
 use std::time::Duration;
 
-fn watch<T: Reactor>(dir: &str, reactor: T) -> notify::Result<()> {
-    let (tx, rx) = channel();
-    let mut watcher: RecommendedWatcher = try!(Watcher::new(tx, Duration::from_secs(10)));
-    try!(watcher.watch(dir, RecursiveMode::Recursive));
+struct Watchdog<T: Reactor> {
+    _watcher: RecommendedWatcher,
+    rx: mpsc::Receiver<notify::DebouncedEvent>,
+    reactor: T,
+}
 
-    for _ in rx {
-        reactor.run().expect("Run failure");
+impl<T: Reactor> Watchdog<T> {
+    fn new(reactor: T) -> Watchdog<T> {
+        let (tx, rx) = mpsc::channel();
+        let mut watcher: RecommendedWatcher =
+            Watcher::new(tx, Duration::from_secs(2)).expect("Couldn't choose a watcher.");
+
+        watcher
+            .watch(reactor.monitored(), RecursiveMode::Recursive)
+            .unwrap();
+
+        Watchdog {
+            _watcher: watcher,
+            rx,
+            reactor,
+        }
     }
 
-    Ok(())
+    fn run(self) {
+        for _ in self.rx {
+            self.reactor.run().expect("Run failure");
+        }
+    }
 }
 
 fn main() {
     let args = env::args().skip(1).collect::<Vec<String>>();
+
+    if args.len() < 3 {
+        eprintln!("Need 3 arguments!");
+        std::process::exit(1);
+    }
 
     let source = &args[0];
     let target = &args[1];
     let ignorefile = &args[2];
 
     if !Path::new(source).is_dir() {
-        eprintln!("Source is not a directory!");
+        
         std::process::exit(1)
     }
 
@@ -45,9 +67,8 @@ fn main() {
     }
 
     let dropbox_mirror = Mirror::new(source, target, ignorefile);
-
-    //dropbox_mirror.run().expect("Run failure");
-    let _ = watch(source, dropbox_mirror).unwrap();
+    let watchdog = Watchdog::new(dropbox_mirror);
+    watchdog.run();
 }
 
 struct Mirror {
@@ -58,6 +79,7 @@ struct Mirror {
 
 trait Reactor {
     fn run(&self) -> Result<(), Box<Error>>;
+    fn monitored(&self) -> String;
 }
 
 impl Mirror {
@@ -93,6 +115,12 @@ impl Reactor for Mirror {
         //     String::from_utf8_lossy(&output.stderr)
         // };
         Ok(())
+    }
+
+    fn monitored(&self) -> String {
+        //(*&self.source).clone()
+        //String::from(&self.source[..])
+        self.source.clone()
     }
 }
 
