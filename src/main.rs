@@ -3,7 +3,6 @@ extern crate notify;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 
 use std::env;
-use std::error::Error;
 use std::path::Path;
 use std::process::Command;
 use std::sync::mpsc;
@@ -32,19 +31,19 @@ impl<T: Reactor> Watchdog<T> {
         }
     }
 
-    fn run(self) {
+    fn run(self) -> Result<(), &'static str> {
         for _ in self.rx {
-            self.reactor.run().expect("Run failure");
+            self.reactor.run()?;
         }
+        Ok(())
     }
 }
 
-fn main() {
+fn main() -> Result<(), &'static str> {
     let args = env::args().skip(1).collect::<Vec<String>>();
 
     if args.len() < 3 {
-        eprintln!("Need 3 arguments!");
-        std::process::exit(1);
+        return Err("Need 3 arguments!");
     }
 
     let source = &args[0];
@@ -52,23 +51,23 @@ fn main() {
     let ignorefile = &args[2];
 
     if !Path::new(source).is_dir() {
-        eprintln!("Source is not a directory!");
-        std::process::exit(1)
+        return Err("Source is not a directory!");
     }
 
     if !Path::new(target).is_dir() {
-        eprintln!("Target is not a directory!");
-        std::process::exit(1)
+        return Err("Target is not a directory!");
     }
 
     if !Path::new(ignorefile).is_file() {
-        eprintln!("Ignore is not a file!");
-        std::process::exit(1)
+        return Err("Ignore is not a file!");
     }
 
     let dropbox_mirror = Mirror::new(source, target, ignorefile);
     let watchdog = Watchdog::new(dropbox_mirror);
-    watchdog.run();
+
+    watchdog.run()?;
+
+    Ok(())
 }
 
 struct Mirror {
@@ -78,7 +77,7 @@ struct Mirror {
 }
 
 trait Reactor {
-    fn run(&self) -> Result<(), Box<Error>>;
+    fn run(&self) -> Result<(), &'static str>;
     fn monitored(&self) -> String;
 }
 
@@ -93,7 +92,7 @@ impl Mirror {
 }
 
 impl Reactor for Mirror {
-    fn run(&self) -> Result<(), Box<Error>> {
+    fn run(&self) -> Result<(), &'static str> {
         let output = Command::new("rsync")
                             .arg("-a")
                             .arg("--delete")
@@ -104,22 +103,17 @@ impl Reactor for Mirror {
                             .output()
                             .expect("rsync failed to start");
 
-        println!("status: {}", output.status);
-        println!("stdout: {}", String::from_utf8_lossy(&output.stdout));
-        eprintln!("stderr: {}", String::from_utf8_lossy(&output.stderr));
-
-        assert!(output.status.success());
-        // let s = if output.status.success() {
-        //     String::from_utf8_lossy(&output.stdout)
-        // } else {
-        //     String::from_utf8_lossy(&output.stderr)
-        // };
-        Ok(())
+        if !output.status.success() {
+            println!("status: {}", output.status);
+            println!("stdout: {}", String::from_utf8_lossy(&output.stdout));
+            eprintln!("stderr: {}", String::from_utf8_lossy(&output.stderr));
+            Err("rsync failed")
+        } else {
+            Ok(())
+        }
     }
 
     fn monitored(&self) -> String {
-        //(*&self.source).clone()
-        //String::from(&self.source[..])
         self.source.clone()
     }
 }
