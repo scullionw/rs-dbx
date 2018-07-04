@@ -12,10 +12,11 @@ struct Watchdog<T: Reactor> {
     _watcher: RecommendedWatcher,
     rx: mpsc::Receiver<notify::DebouncedEvent>,
     reactor: T,
+    mode: DiffMode,
 }
 
 impl<T: Reactor> Watchdog<T> {
-    fn new(reactor: T) -> Watchdog<T> {
+    fn new(reactor: T, mode: DiffMode) -> Watchdog<T> {
         let (tx, rx) = mpsc::channel();
         let mut watcher: RecommendedWatcher =
             Watcher::new(tx, Duration::from_secs(2)).expect("Couldn't choose a watcher.");
@@ -28,12 +29,14 @@ impl<T: Reactor> Watchdog<T> {
             _watcher: watcher,
             rx,
             reactor,
+            mode,
         }
     }
 
     fn run(self) -> Result<(), &'static str> {
         for _ in self.rx {
             self.reactor.run()?;
+            show_not_copied(self.mode, &self.reactor.monitored(), &self.reactor.target())?;
         }
         Ok(())
     }
@@ -63,7 +66,7 @@ fn main() -> Result<(), &'static str> {
     }
 
     let dropbox_mirror = Mirror::new(source, target, ignorefile);
-    let watchdog = Watchdog::new(dropbox_mirror);
+    let watchdog = Watchdog::new(dropbox_mirror, DiffMode::NotCopied);
 
     watchdog.run()?;
 
@@ -79,6 +82,7 @@ struct Mirror {
 trait Reactor {
     fn run(&self) -> Result<(), &'static str>;
     fn monitored(&self) -> String;
+    fn target(&self) -> String;
 }
 
 impl Mirror {
@@ -116,12 +120,67 @@ impl Reactor for Mirror {
     fn monitored(&self) -> String {
         self.source.clone()
     }
+
+    fn target(&self) -> String {
+        self.target.clone()
+    }
 }
 
-struct Diff;
+#[derive(Copy, Clone)]
+enum DiffMode {
+    NotCopied,
+    Off,
+}
 
-impl Diff {
-    fn show_not_copied() {
-        unimplemented!();
+// Why did they need unsafe to do this?
+// https://github.com/mgattozzi/pipers/blob/master/src/lib.rs#L52:48
+// https://www.reddit.com/r/rust/comments/3azfie/how_to_pipe_one_process_into_another/
+// https://github.com/rust-lang/rust/pull/42133
+// https://github.com/rust-lang/rust/issues/34593
+// https://github.com/rust-lang/rfcs/issues/1519
+// https://github.com/oconnor663/duct.rs
+// https://github.com/oconnor663/os_pipe.rs
+
+use std::fs;
+use std::process::Stdio;
+
+// create or append to file
+fn show_not_copied(mode: DiffMode, source_dir: &str, target_dir: &str) -> Result<(), &'static str> {
+    match mode {
+        DiffMode::NotCopied => {
+            let diff_output = Command::new("diff")
+                .args(&["-rq", source_dir, target_dir])
+                .stdout(Stdio::piped())
+                .spawn() // Why not output?
+                .expect("diff failed to run");
+
+            // if !diff_output.status.success() {
+            //     println!("status: {}", diff_output.status);
+            //     println!("stdout: {}", String::from_utf8_lossy(&diff_output.stdout));
+            //     eprintln!("stderr: {}", String::from_utf8_lossy(&diff_output.stderr));
+            //     Err("diff failed")
+            // } else {
+            //     println!("stdout: {}", String::from_utf8_lossy(&diff_output.stdout));
+            //     Ok(())
+            // }
+
+            let grep_output = Command::new("grep")
+                .arg(["Only in", source_dir].join(" "))
+                .stdin(diff_output.stdout.unwrap())
+                .output()
+                .expect("grep failed to run");
+
+            if !grep_output.status.success() {
+                println!("status: {}", grep_output.status);
+                println!("stdout: {}", String::from_utf8_lossy(&grep_output.stdout));
+                eprintln!("stderr: {}", String::from_utf8_lossy(&grep_output.stderr));
+                Err("diff or grep failed")
+            } else {
+                let result = String::from_utf8_lossy(&grep_output.stdout);
+                fs::write(".rsynclog", &result[..]).unwrap();
+                Ok(())
+            }
+        }
+        DiffMode::Off => Ok(()),
     }
 }
